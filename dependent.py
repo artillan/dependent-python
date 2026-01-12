@@ -1,5 +1,6 @@
 import numpy as np
 import json
+import matplotlib.pyplot as plt
 
 class Dependent:
 
@@ -81,17 +82,53 @@ class Dependent:
             string += f"{key:<{max_key_len}}: {value}\n"
             np.set_printoptions(threshold=1000, edgeitems=3) # Reset options for good practice
         return string
-        
-    def __getitem__(self, key):
-        value = self.value[self._to_slices(key)]
-        parameters = {param_name: self.parameters[param_name][key[param_index]]for param_index, param_name in enumerate(self.parameters.keys())}
-        return Dependent(value, parameters = parameters, label = self.label, dtype = self.dtype)
     
-    def __setitem__(self, key, value):
-       self.value[self._to_slices(key)] = value
-        # self.parameters = {param_name: self.parameters[param_name][key[param_index]]for param_index, param_name in enumerate(self.parameters.keys())}
+    def _retrieve_index(self, param_name, int_or_set):
         
+        def _find_index(array, target_value):
+            
+            if target_value == 0.0:
+                difference_array = np.abs((array - target_value))
+            else:
+                difference_array = np.abs((array - target_value)/target_value)
+            
+            # Find the minimum difference value
+            # min_difference = difference_array.min()
+            
+            # Get the minimum value
+            min_value = difference_array.min()
+            # Get the index of the minimum value
+            min_index = difference_array.argmin()
+
+            if min_value <= 1e-4:
+                return min_index
+            
+            else:
+                return None
+            
+            
+            # # Find all indices where the difference equals the minimum difference
+            # all_indices = np.where(difference_array == min_difference)[0]
+            
+            # first_index = all_indices[0]
+            
+            # return first_index
         
+        if isinstance(int_or_set, set):
+            if len(int_or_set) == 1:
+                # Convert the set to a list and return the first (and only) item
+                target_value = list(int_or_set)[0]
+                index = _find_index(self.parameters[param_name], target_value)
+                if index == None:
+                    raise Exception(f'Index not found for value {target_value}')
+            else:
+                raise Exception('{} notation accept only one element')
+            
+        elif isinstance(int_or_set, int):
+            index = int_or_set
+        
+        return index
+
     def _to_slices(self, key):
         """Converts all indices in a multi-dimensional key to slices using a generator expression."""
         if isinstance(key, int):
@@ -103,6 +140,78 @@ class Dependent:
         # Use a generator to convert each element and create a new tuple
         return tuple(slice(item, item + 1) if isinstance(item, int) else item for item in key)
 
+        
+    def __getitem__(self, key):
+        parameters_names = list(self.parameters.keys())
+        # print(key)
+        if not isinstance(key, tuple):
+            key = (key,)
+        
+        nparam = len(key)
+        
+        new_key = [np.nan]*nparam
+        new_parameters = {}
+        
+        for kparam in range(nparam):
+            key_token = key[kparam]
+            param_name = parameters_names[kparam]
+            
+            # indexing
+            # my_dependent[3]
+            # my_dependent[{4.2}]
+            if isinstance(key_token, int) or isinstance(key_token, set):
+                start = self._retrieve_index(param_name, key_token)
+                stop = start+1
+                step = None
+            
+                new_key[kparam] = slice(start, stop, step)
+                
+                
+            # slicing
+            elif isinstance(key_token, slice):
+                
+                # my_dependent[3::]
+                # my_dependent[{4.2}::]
+                start = key_token.start
+                if isinstance(start, int) or isinstance(start, set):
+                    start = self._retrieve_index(param_name, start)
+                
+                # my_dependent[:7:]
+                # my_dependent[:{4.2}:]
+                stop = key_token.stop
+                if isinstance(stop, int) or isinstance(stop, set):
+                    stop = self._retrieve_index(param_name, stop)
+                
+                # my_dependent[::2]
+                step = key_token.step
+                if isinstance(step, int) or isinstance(step, set):
+                    step = self._retrieve_index(param_name, step)
+                    
+                new_key[kparam] = slice(start, stop, step)
+                    
+            # fancy indexing (mixed list of integers and sets)
+            # my_dependent[[3,4,6]]
+            # my_dependent[[3,{4.2},{6.3}]]
+            elif isinstance(key_token, list):
+                
+                new_key[kparam] = np.array([self._retrieve_index(param_name, item) for item in key_token])
+                    
+            else:
+                raise Exception(f'unknown type for {key_token}')
+            
+            
+            new_parameters[param_name] = self.parameters[param_name][new_key[kparam]]
+        
+        # value = self.value[self._to_slices(key)]
+        # parameters = {param_name: self.parameters[param_name][key[param_index]]for param_index, param_name in enumerate(self.parameters.keys())}
+
+        new_value = self.value[tuple(new_key)]
+        return Dependent(new_value, parameters = new_parameters, label = self.label, dtype = self.dtype)
+    
+    def __setitem__(self, key, value):
+       self.value[self._to_slices(key)] = value
+        # self.parameters = {param_name: self.parameters[param_name][key[param_index]]for param_index, param_name in enumerate(self.parameters.keys())}
+    
     def clone(self):
         return Dependent(self.value, parameters = self.parameters, label = self.label, dtype = self.dtype)
 
@@ -197,7 +306,49 @@ class Dependent:
         except json.JSONDecodeError:
             print(f"Error: Failed to decode JSON from {json_file_path}. The file content is invalid.")
         
-
+    def plot(self, ax = None):
+        if len(self.parameters)==1:
+            param1 = next(iter(self.parameters))
+            
+            if ax is None:
+                # Create a new figure and axes
+                fig, ax = plt.subplots()
+            else:
+                # Use the provided axes
+                fig = ax.figure
+        
+            ax = fig.add_subplot(111)
+            ax.plot(self.parameters[param1], self.value)
+            ax.set_xlabel(param1)
+            ax.set_ylabel(self.label)
+            
+        elif len(self.parameters)==2:
+            gene_params = iter(self.parameters)
+            param1 = next(gene_params)
+            param2 = next(gene_params)
+            x = self.parameters[param1]
+            y = self.parameters[param2]
+            Y, X = np.meshgrid(y, x)
+            Z = self.value    # np.sin(np.sqrt(X**2 + Y**2)) / (np.sqrt(X**2 + Y**2)) # A sinc function
+            
+            # Plot the 3D surface mesh
+            if ax is None:
+                # Create a new figure and axes
+                fig, ax = plt.subplots()
+            else:
+                # Use the provided axes
+                fig = ax.figure
+            ax = fig.add_subplot(111, projection='3d')
+            surface = ax.plot_surface(X, Y, Z, cmap='viridis')
+            # ax.set_title(f"{self.label}")
+            ax.set_xlabel(param1)
+            ax.set_ylabel(param2)
+            ax.set_zlabel(self.label)
+            
+        else:
+            raise Exception(f'plot method is undefined for ({self.shape}) Dependents')
+            
+        # plt.show()
 
 
 
@@ -212,10 +363,16 @@ if __name__ == "__main__":
     print(d2)
     
     print('*** Create a float64 Dependent (default type) ***')
-    d3 = Dependent([[1, 2, 3],[4, 5, 6]], parameters = {'p1': [1, 2], 'p2': [10, 20, 30]})
+    d3 = Dependent([[1, 2, 3],[4, 5, 6]], parameters = {'p1': [1, 2], 'p2': [10, 20, 30]}, label='d3')
     print(d3)
     
     print('*** Indexing and slicing ***')
+    
+    d8 = d3[0,:].squeeze()
+    print(d8[0])
+    
+    
+    print(d3[{0},0:2])
     print(d3[1,2])
     print(d3[0,:])
     print(d3[:,1])
@@ -233,6 +390,11 @@ if __name__ == "__main__":
     Dependent.save_dict_of_dependents(dataset, 'test.json')
     reloaded_dataset = Dependent.load_dict_of_dependents('test.json')
     print(reloaded_dataset)
+    
+
+    plt.close('all')    
+    d3.plot()
+    d3[0,:].squeeze().plot()
     
     
     
