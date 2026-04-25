@@ -1,5 +1,6 @@
 import numpy as np
 import json
+import xarray as xr
 import matplotlib.pyplot as plt
 
 class Dependent:
@@ -275,7 +276,17 @@ class Dependent:
         """
         data_dict = self.to_dict()
         return json.dumps(data_dict, indent=2)
-       
+    
+    def to_xarray(self):
+        da = xr.DataArray(
+            data=self.value,
+            dims=self.parameters.keys(),
+            coords=self.parameters,
+            name=self.label
+        )
+        
+        return da
+    
     @classmethod
     def save_dict_of_dependents(cls, dict_of_dependents, json_file_path):
         
