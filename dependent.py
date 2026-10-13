@@ -277,15 +277,54 @@ class Dependent:
         data_dict = self.to_dict()
         return json.dumps(data_dict, indent=2)
     
-    def to_xarray(self):
+    def to_xarray(self, split_complex=False):
+        """Convertit l'objet en xarray.DataArray ou Dataset.
+        :param split_complex: Si True, retourne un xr.Dataset avec 'label_real' et
+            'label_imag' pour une compatibilité parfaite avec MATLAB.
+        """
+        data = np.asarray(self.value)
+        dims = list(self.parameters.keys())
+        coords = self.parameters
+    
+        # Si data est un scalaire mais qu'on a des dimensions définies, 
+        # on peut soit lever une erreur claire, soit le diffuser (broadcast) :
+        if data.ndim == 0 and len(dims) > 0:
+            # Option : Créer un tableau rempli de cette valeur avec les bonnes dimensions
+            shape = [len(coords[d]) for d in dims]
+            data = np.full(shape, data.item())
+    
         da = xr.DataArray(
-            data=self.value,
-            dims=self.parameters.keys(),
-            coords=self.parameters,
-            name=self.label
+            data=data,
+            dims=dims,
+            coords=coords,
+            name=self.label,
         )
-        
+    
+        if split_complex and np.issubdtype(da.dtype, np.complexfloating):
+            name = self.label or "data"
+            return xr.Dataset({f"{name}_real": da.real, f"{name}_imag": da.imag})
+    
         return da
+
+    # def to_xarray(self, split_complex=False):
+    #     """Convertit l'objet en xarray.DataArray ou Dataset.
+    
+    #     :param split_complex: Si True, retourne un xr.Dataset avec 'label_real' et
+    #         'label_imag' pour une compatibilité parfaite avec MATLAB.
+    #     """
+    #     da = xr.DataArray(
+    #         data=self.value,
+    #         dims=list(self.parameters.keys()),
+    #         coords=self.parameters,
+    #         name=self.label,
+    #     )
+    
+    #     if split_complex and np.issubdtype(da.dtype, np.complexfloating):
+    #         # Retourne un Dataset avec les composantes réelle et imaginaire séparées
+    #         name = self.label or "data"
+    #         return xr.Dataset({f"{name}_real": da.real, f"{name}_imag": da.imag})
+    
+    #     return da
     
     @classmethod
     def save_dict_of_dependents(cls, dict_of_dependents, json_file_path):
